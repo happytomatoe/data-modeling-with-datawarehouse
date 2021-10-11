@@ -5,6 +5,7 @@ from sql_queries import copy_table_queries, insert_table_queries
 
 def load_staging_tables(cur, conn):
     for query in copy_table_queries:
+        # TODO: finish him
         cur.execute(query)
         conn.commit()
 
