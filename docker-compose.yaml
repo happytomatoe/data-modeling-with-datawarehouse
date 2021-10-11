@@ -1,0 +1,11 @@
+version: '2'
+
+services:
+  datascience-notebook:
+    build: '.'
+    command: "start-notebook.sh \
+     -ip='*' --NotebookApp.token='' --NotebookApp.password=''"
+    volumes:
+      - ./:/home/jovyan/work
+    ports:
+      - 8888:8888
