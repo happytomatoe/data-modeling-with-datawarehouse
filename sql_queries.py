@@ -20,26 +20,7 @@ config.read('dwh.cfg')
 
 
 # CREATE TABLES
-# {
-#   "artist": null,
-#   "auth": "Logged In",
-#   "firstName": "Walter",
-#   "gender": "M",
-#   "itemInSession": 0,
-#   "lastName": "Frye",
-#   "length": null,
-#   "level": "free",
-#   "location": "San Francisco-Oakland-Hayward, CA",
-#   "method": "GET",
-#   "page": "Home",
-#   "registration": 1540919166796.0,
-#   "sessionId": 38,
-#   "song": null,
-#   "status": 200,
-#   "ts": 1541105830796,
-#   "userAgent": "\"Mozilla\/5.0 (Macintosh; Intel Mac OS X 10_9_4) AppleWebKit\/537.36 (KHTML, like Gecko) Chrome\/36.0.1985.143 Safari\/537.36\"",
-#   "userId": "39"
-# }
+
 staging_events_table_create = (f"""
 CREATE TABLE {TableNames.staging_events}(
     -- filtering 
@@ -48,7 +29,7 @@ CREATE TABLE {TableNames.staging_events}(
     ts bigint,
     -- user data
     userAgent varchar,
-    userId varchar,
+    userId varchar distkey,
     firstName varchar,
     lastName varchar,
     gender char,
@@ -59,6 +40,42 @@ CREATE TABLE {TableNames.staging_events}(
     length varchar
 )
 """)
+#     log_df = log_df[log_df.page == "NextSong"]
+#
+#     # remove quotes in User Agent field
+#     log_df['userAgent'] = log_df['userAgent'].str.replace('"', '')
+#
+#     # convert timestamp column to datetime
+#     log_df['start_time'] = pd.to_datetime(log_df["ts"], unit='ms')
+#
+#     time_data_df = log_df[['start_time']].copy()
+#     datetime = time_data_df.start_time.dt
+#     time_data_df['hour'] = datetime.hour
+#     time_data_df['day'] = datetime.day
+#     time_data_df['week_of_year'] = datetime.week
+#     time_data_df['month'] = datetime.month
+#     time_data_df['year'] = datetime.year
+#     time_data_df['weekday'] = datetime.weekday
+#     time_data_df = time_data_df.drop_duplicates(subset=['start_time'])
+#     load_into_db(cur, time_data_df, TableNames.TIME)
+#
+#     user_df = log_df[["userId", "firstName", "lastName", "gender", "level"]].copy()
+#     user_df = user_df.drop_duplicates(subset=['userId'])
+#     load_into_db(cur, user_df, TableNames.USERS, "user_id", ["level"])
+#
+#     common_columns = ['song', 'artist', 'length']
+#     tuples = [tuple(x) for x in log_df[common_columns].values]
+#     df2 = select_song_and_artist_ids(cur, tuples)
+#     if not df2.empty:
+#         log_df = log_df.merge(df2, how='left', on=common_columns)
+#     else:
+#         log_df["artist_id"] = np.nan
+#         log_df["song_id"] = np.nan
+#     log_df['id'] = [str(uuid4()) for _ in range(len(log_df.index))]
+#     songplay_data = log_df[
+#         ['id', 'start_time', 'userId', 'level', 'song_id', 'artist_id',
+#          'sessionId', 'location', 'userAgent']]
+#     load_into_db(cur, songplay_data, TableNames.SONGPLAYS)
 
 staging_songs_table_create = (f"""
 CREATE TABLE {TableNames.staging_songs}(
@@ -69,12 +86,16 @@ CREATE TABLE {TableNames.staging_songs}(
     artist_longitude real,
     artist_location varchar,
     duration real,
-    num_songs int,
-    song_id varchar,
+    song_id varchar distkey,
     title varchar,
     year smallint
 )
 """)
+# artist table
+# "artist_id", "artist_name", "artist_location", "artist_latitude",
+#                     "artist_longitude"
+# song table
+# 'song_id', "title", "artist_id", "year", "duration"
 
 # TODO:
 # add constraint songplays__time_fk references time
@@ -158,7 +179,7 @@ iam_role {{}}
 COMPUPDATE OFF STATUPDATE OFF
 format as json 'auto';
 ;
-""").format(config['S3']['SONG_DATA'],config['IAM_ROLE']['ARN'])
+""").format(config['S3']['SONG_DATA'], config['IAM_ROLE']['ARN'])
 
 # FINAL TABLES
 
