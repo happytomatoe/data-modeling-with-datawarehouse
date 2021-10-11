@@ -46,7 +46,8 @@ recreate-tables:
 	${VENV_ACTIVATE}
 	${PYTHON_VENV} create_tables.py
 
-run: recreate-tables
+run:
+	${VENV_ACTIVATE}
 	${PYTHON_VENV} etl.py
 
 doc: venv

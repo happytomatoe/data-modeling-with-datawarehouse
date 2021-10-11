@@ -20,22 +20,65 @@ config.read('dwh.cfg')
 
 
 # CREATE TABLES
-
+# {
+#   "artist": null,
+#   "auth": "Logged In",
+#   "firstName": "Walter",
+#   "gender": "M",
+#   "itemInSession": 0,
+#   "lastName": "Frye",
+#   "length": null,
+#   "level": "free",
+#   "location": "San Francisco-Oakland-Hayward, CA",
+#   "method": "GET",
+#   "page": "Home",
+#   "registration": 1540919166796.0,
+#   "sessionId": 38,
+#   "song": null,
+#   "status": 200,
+#   "ts": 1541105830796,
+#   "userAgent": "\"Mozilla\/5.0 (Macintosh; Intel Mac OS X 10_9_4) AppleWebKit\/537.36 (KHTML, like Gecko) Chrome\/36.0.1985.143 Safari\/537.36\"",
+#   "userId": "39"
+# }
 staging_events_table_create = (f"""
 CREATE TABLE {TableNames.staging_events}(
-    id bigint not null 
+    -- filtering 
+    page varchar,
+    -- time data
+    ts bigint,
+    -- user data
+    userAgent varchar,
+    userId varchar,
+    firstName varchar,
+    lastName varchar,
+    gender char,
+    level varchar,
+    -- songplay data
+    artist varchar,  
+    song varchar,
+    length varchar
 )
 """)
 
 staging_songs_table_create = (f"""
 CREATE TABLE {TableNames.staging_songs}(
-    id bigint not null 
+--     id bigint not null,
+    artist_id varchar,
+    artist_name varchar,
+    artist_latitude real,
+    artist_longitude real,
+    artist_location varchar,
+    duration real,
+    num_songs int,
+    song_id varchar,
+    title varchar,
+    year smallint
 )
 """)
 
 # TODO:
 # add constraint songplays__time_fk references time
-songplay_table_create = (f"""
+songplays_table_create = (f"""
 CREATE TABLE {TableNames.SONGPLAYS}(
     id varchar not null constraint songplays_pk primary key,
     start_time timestamp not null,
@@ -99,10 +142,23 @@ CREATE TABLE {TableNames.TIME}(
 # STAGING TABLES
 
 staging_events_copy = (f"""
-""").format()
+copy {TableNames.staging_events} 
+from {{}} 
+iam_role {{}}
+COMPUPDATE OFF STATUPDATE OFF
+format as json 'auto';
+;
+""").format(config['S3']['LOG_DATA'], config['IAM_ROLE']['ARN'])
 
 staging_songs_copy = (f"""
-""").format()
+copy {TableNames.staging_songs} 
+from {{}}
+iam_role {{}}
+-- from https://stackoverflow.com/questions/57196733/best-methods-for-staging-tables-you-updated-in-redshift
+COMPUPDATE OFF STATUPDATE OFF
+format as json 'auto';
+;
+""").format(config['S3']['SONG_DATA'],config['IAM_ROLE']['ARN'])
 
 # FINAL TABLES
 
@@ -125,9 +181,9 @@ time_table_insert = ("""
 
 create_table_queries = [staging_events_table_create, staging_songs_table_create,
                         user_table_create, artist_table_create, song_table_create,
-                        time_table_create, songplay_table_create]
+                        time_table_create, songplays_table_create]
 
-DROP_TABLE_QUERY_TEMPLATE = "DROP TABLE IF EXISTS {};"
+DROP_TABLE_QUERY_TEMPLATE = "DROP TABLE IF EXISTS {} CASCADE;"
 
 drop_table_queries = [DROP_TABLE_QUERY_TEMPLATE.format(x) for x in TableNames.ALL_TABLES]
 
