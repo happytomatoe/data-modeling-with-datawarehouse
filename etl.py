@@ -80,7 +80,6 @@ def load_staging_tables(cur, conn, config):
     for query in copy_table_queries:
         print("Executing query")
         print(query)
-        # TODO: finish him
         time_it(lambda: cur.execute(query))
         conn.commit()
 
@@ -115,7 +114,7 @@ def main():
         "host={} dbname={} user={} password={} port={}".format(*config['CLUSTER'].values()))
     cur = conn.cursor()
 
-    load_staging_tables(cur, conn, config)
+    # load_staging_tables(cur, conn, config)
     insert_tables(cur, conn)
 
     conn.close()

@@ -62,4 +62,5 @@ compose:
 compose-rebuild:
 	docker-compose build
 	docker-compose up -d
-
+rerun: recreate-tables
+	${PYTHON_VENV} etl.py	

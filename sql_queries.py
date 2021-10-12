@@ -20,7 +20,26 @@ config.read('dwh.cfg')
 
 
 # CREATE TABLES
-
+# {
+#   "artist": "Des'ree",
+#   "auth": "Logged In",
+#   "firstName": "Kaylee",
+#   "gender": "F",
+#   "itemInSession": 1,
+#   "lastName": "Summers",
+#   "length": 246.30812,
+#   "level": "free",
+#   "location": "Phoenix-Mesa-Scottsdale, AZ",
+#   "method": "PUT",
+#   "page": "NextSong",
+#   "registration": 1540344794796.0,
+#   "sessionId": 139,
+#   "song": "You Gotta Be",
+#   "status": 200,
+#   "ts": 1541106106796,
+#   "userAgent": "\"Mozilla\/5.0 (Windows NT 6.1; WOW64) AppleWebKit\/537.36 (KHTML, like Gecko) Chrome\/35.0.1916.153 Safari\/537.36\"",
+#   "userId": "8"
+# }
 staging_events_table_create = (f"""
 CREATE TABLE {TableNames.staging_events}(
     -- filtering 
@@ -28,18 +47,21 @@ CREATE TABLE {TableNames.staging_events}(
     -- time data
     ts bigint,
     -- user data
-    userAgent varchar,
-    userId varchar distkey,
-    firstName varchar,
-    lastName varchar,
+    useragent varchar,
+    userid varchar,
+    firstname varchar,
+    lastname varchar,
     gender char,
     level varchar,
     -- songplay data
     artist varchar,  
     song varchar,
-    length varchar
+    length real,
+    sessionid bigint,
+    location varchar
 )
 """)
+
 #     log_df = log_df[log_df.page == "NextSong"]
 #
 #     # remove quotes in User Agent field
@@ -109,7 +131,7 @@ CREATE TABLE {TableNames.staging_songs}(
 # add constraint songplays__time_fk references time
 songplays_table_create = (f"""
 CREATE TABLE {TableNames.SONGPLAYS}(
-    id varchar not null constraint songplays_pk primary key distkey,
+    id bigint IDENTITY(1,1) distkey,
     start_time timestamp not null,
     user_id bigint constraint songplays__user_fk references users,
     level varchar,
@@ -175,9 +197,9 @@ copy {TableNames.staging_events}
 from {{}} 
 iam_role {{}}
 COMPUPDATE OFF STATUPDATE OFF
-format as json 'auto';
+format as json 'auto ignorecase';
 ;
-""").format(config['S3']['LOG_DATA'], config['IAM_ROLE']['ARN'])
+""").format(config['S3']['LOG_DATA'], config['IAM_ROLE']['ARN'], config['IAM_ROLE']['ARN'])
 
 staging_songs_copy = (f"""
 copy {TableNames.staging_songs} 
@@ -215,18 +237,53 @@ format as json 'auto';
 #          'sessionId', 'location', 'userAgent']]
 #     load_into_db(cur, songplay_data, TableNames.SONGPLAYS)
 songplay_table_insert = (f"""
-
+	INSERT INTO {TableNames.SONGPLAYS}( start_time, user_id, level,
+	 song_id, artist_id, session_id, location, user_agent)
+    SELECT timestamp 'epoch' + ts/1000 * interval '1 second' AS start_time,
+    userid::bigint as user_id, 
+    level,
+    NULL,
+    NULL,
+    sessionid as session_id,
+    location,
+    useragent as user_agent
+    FROM {TableNames.staging_events} st
+    WHERE st.page='NextSong'
 """)
 #     log_df = log_df[log_df.page == "NextSong"]
-#
-#     # remove quotes in User Agent field
-#     log_df['userAgent'] = log_df['userAgent'].str.replace('"', '')
-#
 #
 #     user_df = log_df[["userId", "firstName", "lastName", "gender", "level"]].copy()
 #     user_df = user_df.drop_duplicates(subset=['userId'])
 #     load_into_db(cur, user_df, TableNames.USERS, "user_id", ["level"])
+
+# TODO: add update
+# Copied the idea on how replace empty values to 0 from
+# https://stackoverflow.com/questions/49372415/invalid-digits-on-redshift/52861588
 user_table_insert = (f"""
+   
+    INSERT INTO {TableNames.USERS}(user_id,first_name,last_name,gender,level)  
+     
+     with cte as (
+        SELECT 
+        case when userid ~ '^[0-9]+$' then cast(userid as bigint)
+        end as user_id,
+        firstname as first_name, 
+        lastname as last_name,
+        gender, 
+        level,
+        ts FROM {TableNames.staging_events}
+        WHERE page='NextSong' 
+    ), st as (
+        SELECT user_id,first_name,last_name,gender,level FROM (
+        SELECT *, ROW_NUMBER() OVER(PARTITION BY user_id ORDER BY ts DESC) FROM cte
+        )
+        WHERE row_number=1
+    )
+    
+    SELECT st.* FROM st  
+    LEFT OUTER JOIN {TableNames.USERS} b 
+    ON st.user_id IS NOT NULL AND st.user_id=b.user_id 
+    WHERE b.user_id is null;
 """)
 
 #     df = df.replace({'year': {0: np.nan}})
@@ -268,6 +325,8 @@ artist_table_insert = (f"""
 #     time_data_df = time_data_df.drop_duplicates(subset=['start_time'])
 #     load_into_db(cur, time_data_df, TableNames.TIME)
 
+# TODO: drop duplicates inside staging table
+
 # Idea on how convert to timestamp from https://stackoverflow.com/questions/39815425/how-to-convert-epoch-to-datetime-redshift
 time_table_insert = (f"""
     INSERT INTO {TableNames.TIME}(start_time,hour,day,week,month,year,weekday)  
@@ -278,9 +337,11 @@ time_table_insert = (f"""
     extract(month from start_time) as month,
     extract(year from start_time) as year,
     extract(weekday from start_time) as weekday
-    FROM {TableNames.staging_events}) st  
-    LEFT OUTER JOIN {TableNames.TIME} b USING(start_time)
-    WHERE b.start_time is null;
+    FROM {TableNames.staging_events}
+    WHERE page='NextSong') st  
+    LEFT OUTER JOIN {TableNames.TIME} b 
+    ON st.start_time = b.start_time
+    WHERE b.start_time is null
 """)
 
 # QUERY LISTS
@@ -294,6 +355,5 @@ DROP_TABLE_QUERY_TEMPLATE = "DROP TABLE IF EXISTS {} CASCADE;"
 drop_table_queries = [DROP_TABLE_QUERY_TEMPLATE.format(x) for x in TableNames.ALL_TABLES]
 
 copy_table_queries = [staging_events_copy, staging_songs_copy]
-insert_table_queries = [artist_table_insert, song_table_insert, time_table_insert]
-# ,
-# user_table_insert , , songplay_table_insert]
+insert_table_queries = [artist_table_insert, song_table_insert, time_table_insert,
+                        user_table_insert, songplay_table_insert]
