@@ -102,6 +102,7 @@ def upload_manifest(config):
 
 def insert_tables(cur, conn):
     for query in insert_table_queries:
+        print(f"Executing query {query}")
         cur.execute(query)
         conn.commit()
 
@@ -115,7 +116,7 @@ def main():
     cur = conn.cursor()
 
     load_staging_tables(cur, conn, config)
-    # insert_tables(cur, conn)
+    insert_tables(cur, conn)
 
     conn.close()
 

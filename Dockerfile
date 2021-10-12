@@ -49,5 +49,5 @@ RUN jupyter nbextension enable runtools/main
 RUN jupyter nbextension enable livemdpreview/livemdpreview
 RUN jupyter nbextension enable help_panel/help_panel
 RUN jupyter nbextension enable autoscroll/main
-
+RUN jupyter nbextension enable limit_output/main
 
