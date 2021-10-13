@@ -102,10 +102,11 @@ def upload_manifest(config):
 def insert_tables(cur, conn):
     for query in insert_table_queries:
         print(f"Executing query {query}")
-        cur.execute(query)
+        time_it(lambda: cur.execute(query))
         conn.commit()
 
 
+# TODO: add create/drop staging tables
 def main():
     config = configparser.ConfigParser()
     config.read('dwh.cfg')
@@ -114,7 +115,7 @@ def main():
         "host={} dbname={} user={} password={} port={}".format(*config['CLUSTER'].values()))
     cur = conn.cursor()
 
-    # load_staging_tables(cur, conn, config)
+    load_staging_tables(cur, conn, config)
     insert_tables(cur, conn)
 
     conn.close()

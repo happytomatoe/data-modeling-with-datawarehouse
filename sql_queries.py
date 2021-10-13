@@ -43,7 +43,7 @@ config.read('dwh.cfg')
 staging_events_table_create = (f"""
 CREATE TABLE {TableNames.staging_events}(
     -- filtering 
-    page varchar,
+    page varchar,  -- candidate for sortkey
     -- time data
     ts bigint,
     -- user data
@@ -61,6 +61,9 @@ CREATE TABLE {TableNames.staging_events}(
     location varchar
 )
 """)
+# To pick sort key
+# LEFT JOIN {TableNames.ARTISTS} a ON a.name=st.artist
+#     LEFT JOIN {TableNames.SONGS} s ON s.title=st.song AND s.duration=st.length
 
 #     log_df = log_df[log_df.page == "NextSong"]
 #
@@ -104,8 +107,8 @@ CREATE TABLE {TableNames.staging_songs}(
 --     id bigint not null,
     artist_id varchar,
     artist_name varchar,
-    artist_latitude real,
-    artist_longitude real,
+    artist_latitude float,
+    artist_longitude float,
     artist_location varchar,
     duration real,
     song_id varchar,
@@ -128,11 +131,11 @@ CREATE TABLE {TableNames.staging_songs}(
 
 
 # TODO:
-# add constraint songplays__time_fk references time
+# add
 songplays_table_create = (f"""
 CREATE TABLE {TableNames.SONGPLAYS}(
     id bigint IDENTITY(1,1) distkey,
-    start_time timestamp not null,
+    start_time timestamp not null constraint songplays__time_fk references time,
     user_id bigint constraint songplays__user_fk references users,
     level varchar,
     song_id varchar constraint songplays__songs_fk references songs,
@@ -148,7 +151,7 @@ CREATE TABLE {TableNames.USERS} (
     user_id bigint not null constraint users_pk primary key distkey,
     first_name varchar,
     last_name varchar,
-    gender varchar(1),
+    gender char,
     level varchar
     )
 """)
@@ -159,8 +162,8 @@ CREATE TABLE {TableNames.SONGS} (
     song_id varchar not null constraint songs_pk primary key distkey,
     title varchar not null unique,
     artist_id varchar constraint songs__artist_fk references artists,
-    year integer,
-    duration numeric not null 
+    year smallint,
+    duration real not null 
     )
 
 """)
@@ -168,25 +171,26 @@ CREATE TABLE {TableNames.SONGS} (
 # TODO:
 #  CHECK (latitude >= -90 AND latitude <= 90)
 # CHECK (latitude >= -180 AND latitude <= 180)
+# TODO: change numeric type to real
 artist_table_create = (f"""
 CREATE TABLE {TableNames.ARTISTS}(
     artist_id varchar not null constraint artists_pk primary key distkey,
     name varchar not null unique,
     location varchar,
-    latitude numeric,
-    longitude numeric 
+    latitude real,
+    longitude real 
     )
 """)
 
 time_table_create = (f"""
 CREATE TABLE {TableNames.TIME}(
     start_time timestamp not null constraint time_pk primary key distkey,
-    hour integer not null,
-    day integer not null,
-    week integer not null,
-    month integer not null,
-    year integer not null,
-    weekday integer not null 
+    hour smallint not null,
+    day smallint not null,
+    week smallint not null,
+    month smallint not null,
+    year smallint not null,
+    weekday smallint not null 
 )
 """)
 
@@ -236,20 +240,41 @@ format as json 'auto';
 #         ['id', 'start_time', 'userId', 'level', 'song_id', 'artist_id',
 #          'sessionId', 'location', 'userAgent']]
 #     load_into_db(cur, songplay_data, TableNames.SONGPLAYS)
+
 songplay_table_insert = (f"""
 	INSERT INTO {TableNames.SONGPLAYS}( start_time, user_id, level,
 	 song_id, artist_id, session_id, location, user_agent)
     SELECT timestamp 'epoch' + ts/1000 * interval '1 second' AS start_time,
-    userid::bigint as user_id, 
+    cast(userid as bigint) as user_id, 
     level,
-    NULL,
-    NULL,
+    s.song_id,
+    a.artist_id,
     sessionid as session_id,
-    location,
-    useragent as user_agent
+    st.location,
+    BTRIM(useragent,'"') as user_agent
     FROM {TableNames.staging_events} st
+    LEFT JOIN {TableNames.ARTISTS} a ON a.name=st.artist
+    LEFT JOIN {TableNames.SONGS} s ON s.title=st.song AND s.duration=st.length 
     WHERE st.page='NextSong'
 """)
+# -- filtering
+# page varchar,
+# -- time data
+# ts bigint,
+# -- user data
+# useragent varchar,
+# userid varchar,
+# firstname varchar,
+# lastname varchar,
+# gender char,
+# level varchar,
+# -- songplay data
+# artist varchar,
+# song varchar,
+# length real,
+# sessionid bigint,
+# location varchar
+
 #     log_df = log_df[log_df.page == "NextSong"]
 #
 #     user_df = log_df[["userId", "firstName", "lastName", "gender", "level"]].copy()
@@ -262,7 +287,7 @@ songplay_table_insert = (f"""
 user_table_insert = (f"""
    
     INSERT INTO {TableNames.USERS}(user_id,first_name,last_name,gender,level)  
-     
+    -- filter out records with user id=null       
      with cte as (
         SELECT 
         case when userid ~ '^[0-9]+$' then cast(userid as bigint)
@@ -273,7 +298,9 @@ user_table_insert = (f"""
         level,
         ts FROM {TableNames.staging_events}
         WHERE page='NextSong' 
-    ), st as (
+    ), 
+    -- select records unique user ids with latest timestamp      
+    st as (
         SELECT user_id,first_name,last_name,gender,level FROM (
         SELECT *, ROW_NUMBER() OVER(PARTITION BY user_id ORDER BY ts DESC) FROM cte
         )
@@ -286,20 +313,19 @@ user_table_insert = (f"""
     WHERE b.user_id is null;
 """)
 
-#     df = df.replace({'year': {0: np.nan}})
-# song_df = df[['song_id', "title", "artist_id", "year", "duration"]]
 song_table_insert = (f"""
   -- INSERT NEW ROWS ONLY
-    INSERT INTO {TableNames.SONGS}(song_id, title,artist_id,year,duration)  
-    SELECT  st.song_id, st.title, st.artist_id, st.year, st.duration  FROM
-     {TableNames.staging_songs} st
-    LEFT OUTER JOIN {TableNames.SONGS} b USING(song_id)
-    WHERE b.song_id is null;
+    insert into {TableNames.SONGS}(song_id, title,artist_id,year,duration)  
+    select  st.song_id, st.title, st.artist_id, 
+    case when st.year=0 then NULL
+    else st.year
+    end,     
+    st.duration  FROM
+    {TableNames.staging_songs} st
+    left outer join {TableNames.SONGS} b using(song_id)
+    where b.song_id is null;
 """)
 
-# artist table
-# "artist_id", "artist_name", "artist_location", "artist_latitude",
-#                     "artist_longitude"
 artist_table_insert = (f"""
     -- INSERT NEW ROWS ONLY
     INSERT INTO {TableNames.ARTISTS}(artist_id,name,location,latitude,longitude)  
@@ -309,21 +335,6 @@ artist_table_insert = (f"""
     WHERE b.artist_id is null;
 """)
 
-#     log_df = log_df[log_df.page == "NextSong"]
-#
-#     # convert timestamp column to datetime
-#     log_df['start_time'] = pd.to_datetime(log_df["ts"], unit='ms')
-#
-#     time_data_df = log_df[['start_time']].copy()
-#     datetime = time_data_df.start_time.dt
-#     time_data_df['hour'] = datetime.hour
-#     time_data_df['day'] = datetime.day
-#     time_data_df['week_of_year'] = datetime.week
-#     time_data_df['month'] = datetime.month
-#     time_data_df['year'] = datetime.year
-#     time_data_df['weekday'] = datetime.weekday
-#     time_data_df = time_data_df.drop_duplicates(subset=['start_time'])
-#     load_into_db(cur, time_data_df, TableNames.TIME)
 
 # TODO: drop duplicates inside staging table
 
@@ -337,8 +348,8 @@ time_table_insert = (f"""
     extract(month from start_time) as month,
     extract(year from start_time) as year,
     extract(weekday from start_time) as weekday
-    FROM {TableNames.staging_events}
-    WHERE page='NextSong') st  
+    FROM (SELECT DISTINCT ts FROM {TableNames.staging_events} WHERE page='NextSong')
+    ) st  
     LEFT OUTER JOIN {TableNames.TIME} b 
     ON st.start_time = b.start_time
     WHERE b.start_time is null
