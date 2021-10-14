@@ -9,7 +9,7 @@ import boto3
 import psycopg2
 from botocore.exceptions import ClientError
 
-from sql_queries import insert_table_queries, copy_table_queries
+from sql_queries import insert_table_queries, copy_table_queries, staging_events_copy, TableNames
 
 MANIFEST_FILE_NAME = "manifest.json"
 
@@ -84,6 +84,35 @@ def load_staging_tables(cur, conn, config):
         conn.commit()
 
 
+def load_staging_tables_in_parts(cur, conn, config):
+    # Advice from https://stackoverflow.com/questions/54528567/how-do-i-load-large-number-of-small-csv-files-from-s3-to-redshift
+
+    # create_manifest_file(config)
+    # upload_manifest(config)
+    a = [chr(x) for x in range(ord('A'), ord('Z') + 1)]
+
+    print("Executing query")
+    print(staging_events_copy)
+    time_it(lambda: cur.execute(staging_events_copy))
+    conn.commit()
+    for x in a:
+        print("Executing query")
+
+        q = (f"""
+        copy {TableNames.staging_songs} 
+        from {{}}
+        iam_role {{}}
+        COMPUPDATE OFF STATUPDATE OFF
+        format as json 'auto'
+        truncatecolumns
+        BLANKSASNULL
+        ;
+        """).format(config['S3']['SONG_DATA'][:-1] + "/" + x + "'", config['IAM_ROLE']['ARN'])
+        print(q)
+        time_it(lambda: cur.execute(q))
+        conn.commit()
+
+
 def upload_manifest(config):
     print(f"Uploading {MANIFEST_FILE_NAME} to s3://{my_bucket_name}")
     s3 = boto3.resource('s3', region_name='us-west-2',
@@ -106,7 +135,6 @@ def insert_tables(cur, conn):
         conn.commit()
 
 
-# TODO: add create/drop staging tables
 def main():
     config = configparser.ConfigParser()
     config.read('dwh.cfg')
@@ -115,7 +143,8 @@ def main():
         "host={} dbname={} user={} password={} port={}".format(*config['CLUSTER'].values()))
     cur = conn.cursor()
 
-    load_staging_tables(cur, conn, config)
+    # load_staging_tables(cur, conn, config)
+    # load_staging_tables_in_parts(cur, conn, config)
     insert_tables(cur, conn)
 
     conn.close()
