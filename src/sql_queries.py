@@ -7,32 +7,30 @@ class TableNames:
     SONGS = "songs"
     USERS = "users"
     SONGPLAYS = "songplays"
-    staging_events = "staging_events"
-    staging_songs = "staging_songs"
-    ALL_TABLES = [TIME, ARTISTS, SONGPLAYS, SONGS, USERS, staging_events, staging_songs]
-    staging_tables = [staging_events, staging_songs]
-    ALL_TABLES_WITHOUT_STAGING = [TIME, ARTISTS, SONGPLAYS, SONGS, USERS]
+    STAGING_EVENTS = "staging_events"
+    STAGING_SONGS = "staging_songs"
+    ALL_TABLES = [TIME, ARTISTS, SONGPLAYS, SONGS, USERS, STAGING_EVENTS, STAGING_SONGS]
 
 
 # CONFIG
 config = configparser.ConfigParser()
 config.read('dwh.cfg')
 
-songplays_table_create = (f"""
+SONGPLAYS_TABLE_CREATE = (f"""
 CREATE TABLE {TableNames.SONGPLAYS}(
-    id bigint IDENTITY(1,1),
+    id bigint IDENTITY(1,1) primary key,
     start_time timestamp not null constraint songplays__time_fk references time,
     user_id char(18) constraint songplays__user_fk references users,
     level char(4),
     song_id char(18) constraint songplays__songs_fk references songs,
-    artist_id char(18) constraint songplays__artist_fk references artists,
+    artist_id char(18),
     session_id bigint,
     location varchar,
     user_agent varchar
-    )sortkey(start_time, user_id, song_id, artist_id)
+    ) interleaved sortkey(start_time, user_id, song_id, artist_id)
 """)
 
-user_table_create = (f"""
+USER_TABLE_CREATE = (f"""
 CREATE TABLE {TableNames.USERS} (
     user_id bigint not null constraint users_pk primary key distkey sortkey,
     first_name varchar,
@@ -42,19 +40,19 @@ CREATE TABLE {TableNames.USERS} (
     )
 """)
 
-song_table_create = (f"""
+SONG_TABLE_CREATE = (f"""
 CREATE TABLE {TableNames.SONGS} (
     song_id char(18) not null constraint songs_pk primary key distkey,
     title varchar not null,
-    artist_id char(18) not null constraint songs__artist_fk references artists,
+    artist_id char(18) not null,
     year smallint,
     duration real not null 
     ) interleaved sortkey(song_id, title, artist_id, duration)
 """)
 
-artist_table_create = (f"""
+ARTIST_TABLE_CREATE = (f"""
 CREATE TABLE {TableNames.ARTISTS}(
-    artist_id char(18) not null constraint artists_pk primary key distkey,
+    artist_id char(18) not null distkey,
     name varchar not null,
     location varchar,
     latitude real,
@@ -62,7 +60,7 @@ CREATE TABLE {TableNames.ARTISTS}(
     ) sortkey(artist_id, name) 
 """)
 
-time_table_create = (f"""
+TIME_TABLE_CREATE = (f"""
 CREATE TABLE {TableNames.TIME}(
     start_time timestamp not null constraint time_pk primary key sortkey,
     hour smallint not null,
@@ -76,8 +74,8 @@ CREATE TABLE {TableNames.TIME}(
 
 # STAGING TABLES
 
-staging_events_table_create = (f"""
-CREATE TABLE {TableNames.staging_events}(
+STAGING_EVENTS_TABLE_CREATE = (f"""
+CREATE TABLE {TableNames.STAGING_EVENTS}(
     page varchar,
     ts timestamp,
     useragent varchar,
@@ -94,8 +92,8 @@ CREATE TABLE {TableNames.staging_events}(
 )
 """)
 
-staging_songs_table_create = (f"""
-CREATE TABLE {TableNames.staging_songs}(
+STAGING_SONGS_TABLE_CREATE = (f"""
+CREATE TABLE {TableNames.STAGING_SONGS}(
     artist_id char(18),
     artist_name varchar,
     artist_latitude float,
@@ -108,8 +106,8 @@ CREATE TABLE {TableNames.staging_songs}(
 )
 """)
 
-staging_events_copy = (f"""
-    COPY {TableNames.staging_events} 
+STAGING_EVENTS_COPY = (f"""
+    COPY {TableNames.STAGING_EVENTS} 
     FROM {{}} 
     IAM_ROLE {{}}
     COMPUPDATE OFF STATUPDATE OFF
@@ -119,8 +117,8 @@ staging_events_copy = (f"""
     BLANKSASNULL;
 """).format(config['S3']['LOG_DATA'], config['IAM_ROLE']['ARN'], config['IAM_ROLE']['ARN'])
 
-staging_songs_copy = (f"""
-    COPY {TableNames.staging_songs} 
+STAGING_SONGS_COPY = (f"""
+    COPY {TableNames.STAGING_SONGS} 
     FROM {{}}
     IAM_ROLE {{}}
     COMPUPDATE OFF STATUPDATE OFF
@@ -129,31 +127,35 @@ staging_songs_copy = (f"""
     BLANKSASNULL;
 """).format(config['S3']['SONG_DATA'], config['IAM_ROLE']['ARN'])
 
-# TODO: create another table for artist name/alias
-# FINAL TABLES
-# TODO: try with using
-songplay_table_insert = (f"""
+# INSERTS TABLES
+
+SONGPLAY_TABLE_INSERT = (f"""
+    
     INSERT INTO {TableNames.SONGPLAYS}(start_time, user_id, level,
     song_id, artist_id, session_id, location, user_agent)
+    with deduped_events AS (
+     SELECT * FROM (SELECT *, ROW_NUMBER() OVER(PARTITION BY ts, userid, sessionid, song, artist ) 
+     as rn
+      FROM {TableNames.STAGING_EVENTS} WHERE page='NextSong') WHERE rn=1
+    )
     SELECT ts AS start_time,
     cast(userid as bigint) as user_id, 
     level,
-    case when a.artist_id IS NOT NULL then s.song_id
-    end,
+    CASE WHEN a.artist_id IS NOT NULL THEN s.song_id
+    END,
     a.artist_id,
     sessionid as session_id,
     st.location,
     btrim(useragent,'"') as user_agent
-    FROM {TableNames.staging_events} st
+    FROM deduped_events as st
     LEFT JOIN {TableNames.SONGS} s ON s.title=st.song AND s.duration=st.length 
     LEFT JOIN {TableNames.ARTISTS} a ON s.artist_id=a.artist_id AND a.name=st.artist  
-    WHERE st.page='NextSong'
 """)
 
-user_table_insert = (f"""
-    -- select records unique user ids with latest timestamp      
+USER_TABLE_INSERT = (f"""
+    -- select records with unique user ids based on latest timestamp      
     CREATE TEMPORARY TABLE st AS (
-        SELECT user_id,first_name,last_name, gender, level FROM (
+        SELECT user_id, first_name, last_name, gender, level FROM (
         SELECT *, ROW_NUMBER() OVER(PARTITION BY user_id ORDER BY ts DESC) FROM (
         SELECT 
         cast(userid as  bigint) as user_id,
@@ -161,11 +163,16 @@ user_table_insert = (f"""
         lastname as last_name,
         gender, 
         level,
-        ts FROM {TableNames.staging_events}
+        ts FROM {TableNames.STAGING_EVENTS}
         WHERE page='NextSong' AND userid IS NOT NULL ))
         WHERE row_number=1
     );
     
+    --  Update users level    
+    UPDATE {TableNames.USERS}  
+    SET level=st.level
+    FROM st
+    WHERE {TableNames.USERS}.user_id=st.user_id;
     
     --  Insert only new rows   
     INSERT INTO {TableNames.USERS}(user_id,first_name,last_name,gender,level)  
@@ -173,40 +180,40 @@ user_table_insert = (f"""
     LEFT OUTER JOIN {TableNames.USERS} u
     ON st.user_id IS NOT NULL AND st.user_id=u.user_id 
     WHERE u.user_id IS NULL;
-    
-    UPDATE {TableNames.USERS}  
-    SET level=st.level
-    FROM st
-    WHERE {TableNames.USERS}.user_id=st.user_id;
 """)
 
-song_table_insert = (f"""
-  -- INSERT NEW ROWS ONLY
-    INSERT INTO {TableNames.SONGS}(song_id, title,artist_id,year,duration)  
-    WITH cte AS (
-    SELECT *, ROW_NUMBER() OVER(PARTITION BY song_id) as rn FROM
-     {TableNames.staging_songs}
+SONG_TABLE_INSERT = (f"""
+    -- Insert new rows only
+    INSERT INTO {TableNames.SONGS}(song_id, title, artist_id, year, duration)  
+    WITH deduped_songs AS (
+    SELECT * FROM(SELECT *, ROW_NUMBER() OVER(PARTITION BY song_id) as rn FROM
+     {TableNames.STAGING_SONGS}) WHERE rn=1
     ) 
-    SELECT DISTINCT  st.song_id, st.title, st.artist_id, 
+    SELECT st.song_id, st.title, st.artist_id, 
     CASE WHEN st.year=0 then NULL
     ELSE st.year
     END,     
-    st.duration  FROM cte st
+    st.duration  FROM deduped_songs as st
     LEFT OUTER JOIN {TableNames.SONGS} s USING(song_id)
-    WHERE s.song_id IS NULL AND rn=1;
+    WHERE s.song_id IS NULL;
 """)
 
-# TODO: Add note about duplication in readme
-artist_table_insert = (f"""
-    -- INSERT NEW ROWS ONLY
-    INSERT INTO {TableNames.ARTISTS}(artist_id,name,location,latitude,longitude)  
-    SELECT artist_id, artist_name, artist_location, artist_latitude,
-                     artist_longitude  FROM {TableNames.staging_songs}
-    LEFT OUTER JOIN {TableNames.ARTISTS} a USING(artist_id)
+ARTIST_TABLE_INSERT = (f"""
+    -- Insert new rows only
+    INSERT INTO {TableNames.ARTISTS}(artist_id, name, location, latitude, longitude)  
+    with deduped_artists AS (
+     SELECT * FROM (SELECT *, ROW_NUMBER() OVER(PARTITION BY artist_id, artist_name) 
+     as rn
+      FROM {TableNames.STAGING_SONGS}) WHERE rn=1
+    )
+    SELECT st.artist_id, artist_name, artist_location, artist_latitude,
+                     artist_longitude  FROM deduped_artists as st
+    LEFT OUTER JOIN {TableNames.ARTISTS} a 
+    ON a.artist_id=st.artist_id AND a.name=st.artist_name
     WHERE a.artist_id IS NULL;
 """)
 
-time_table_insert = (f"""
+TIME_TABLE_INSERT = (f"""
     INSERT INTO {TableNames.TIME}(start_time,hour,day,week,month,year,weekday)  
     SELECT st.* FROM (SELECT ts AS start_time, 
     extract(hour from start_time) as hour,
@@ -215,7 +222,7 @@ time_table_insert = (f"""
     EXTRACT(month from start_time) as month,
     EXTRACT(year from start_time) as year,
     EXTRACT(weekday from start_time) as weekday
-    FROM (SELECT DISTINCT ts FROM {TableNames.staging_events} WHERE page='NextSong')
+    FROM (SELECT DISTINCT ts FROM {TableNames.STAGING_EVENTS} WHERE page='NextSong')
     ) st  
     LEFT OUTER JOIN {TableNames.TIME} t 
     ON st.start_time = t.start_time
@@ -224,21 +231,15 @@ time_table_insert = (f"""
 
 # QUERY LISTS
 
-create_table_queries = [staging_events_table_create, staging_songs_table_create,
-                        user_table_create, artist_table_create, song_table_create,
-                        time_table_create, songplays_table_create]
+CREATE_TABLE_QUERIES = [STAGING_EVENTS_TABLE_CREATE, STAGING_SONGS_TABLE_CREATE,
+                        USER_TABLE_CREATE, ARTIST_TABLE_CREATE, SONG_TABLE_CREATE,
+                        TIME_TABLE_CREATE, SONGPLAYS_TABLE_CREATE]
 
 # DROP TABLES
 DROP_TABLE_QUERY_TEMPLATE = "DROP TABLE IF EXISTS {} CASCADE;"
 
-drop_table_queries = [DROP_TABLE_QUERY_TEMPLATE.format(x) for x in TableNames.ALL_TABLES]
+DROP_TABLE_QUERIES = [DROP_TABLE_QUERY_TEMPLATE.format(x) for x in TableNames.ALL_TABLES]
 
-copy_table_queries = [staging_events_copy, staging_songs_copy]
-insert_table_queries = [artist_table_insert, song_table_insert, time_table_insert,
-                        user_table_insert, songplay_table_insert]
-
-# TODO: delete
-create__non_staging_tables_queries = [user_table_create, artist_table_create, song_table_create,
-                                      time_table_create, songplays_table_create]
-drop_non_staging_tables_queries = [DROP_TABLE_QUERY_TEMPLATE.format(x) for x in
-                                   TableNames.ALL_TABLES_WITHOUT_STAGING]
+COPY_TABLE_QUERIES = [STAGING_EVENTS_COPY, STAGING_SONGS_COPY]
+INSERT_TABLE_QUERIES = [ARTIST_TABLE_INSERT, SONG_TABLE_INSERT, TIME_TABLE_INSERT,
+                        USER_TABLE_INSERT, SONGPLAY_TABLE_INSERT]

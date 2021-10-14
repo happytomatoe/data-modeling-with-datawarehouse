@@ -5,32 +5,55 @@ A music streaming startup, Sparkify, has grown their user base and song database
 
 ## Database design
 
+### ER diagram
+![ER diagram](db-schema.png)
+
 ### Fact Table
-songplays - records in event data associated with song plays i.e. records with page NextSong
-- songplay_id, start_time, user_id, level, song_id, artist_id, session_id, location, user_agent
+Songplays - records in event data associated with song plays i.e. records with page NextSong
+- fields: songplay_id, start_time, user_id, level, song_id, artist_id, session_id, location, user_agent 
+- interleaved sort key based on start_time, user_id, song_id, artist_id
+
+Sort key should speed up joins to the dimensions tables. 
+And as most likely analytics query can have different use different joins it's ideal case for interleaved sort key
+
 #### Dimension Tables
-users - users in the app
-- user_id, first_name, last_name, gender, level
+1) Users - users in the app
+- fields: user_id(PK), first_name, last_name, gender, level.
+This table has a distkey and a sortkey based on user_id to speed up join clause. 
 
-songs - songs in music database
+2) Songs - songs in music database
+- fields: song_id(PK), title, artist_id, year, duration
+- distkey - song_id 
+- interleaved sortkey based on song_id, title, artist_id, duration. 
 
-- song_id, title, artist_id, year, duration
+The sort key speeds up inserting new data songplays (that join data based on title, artist_id, duration) and joins based on song_id.
 
-artists - artists in music database
-- artist_id, name, location, lattitude, longitude
+3) artists - artists in music database
+- fields: artist_id, name, location, lattitude, longitude
+- distkey - artist_id
+- compound sortkey based on artist_id, name. Sortkey speeds up insert/joins
 
-time - timestamps of records in songplays broken down into specific units
-- start_time, hour, day, week, month, year, weekday
+As you see from the diagram that this table doesn't have a PK. 
+That's because this table has duplicates.  
+That's because to set artist/song ids in fact table we need to retrieve it from song/artist table based 
+on exact match between song title, song duration and artist name in artists/songs and staging_song table.  
+And according to the dataset we can have artist with same id but with different names.
 
+For example:
+- id=1, name=Beyonce
+- id=1, name=Beyonce Experience
+
+These entries represent same artist but with different names. And there are 2 choices how to handle this case 
+- allow duplication
+- use snowlake schema
+
+As second option will degrade performance as db will execute another join it's better to use duplicates 
+
+5) time - timestamps of records in songplays broken down into specific units
+- fields: start_time, hour, day, week, month, year, weekday
+- sortkey based on start_time to speed up joins
 
 ## Project Datasets
-You'll be working with two datasets that reside in S3. Here are the S3 links for each:
-
-Song data: ``` s3://udacity-dend/song_data```
-
-Log data: ```s3://udacity-dend/log_data```
-
-Log data json path: ```s3://udacity-dend/log_json_path.json```
 
 Song Dataset
 
