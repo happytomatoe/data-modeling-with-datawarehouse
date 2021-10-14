@@ -74,8 +74,8 @@ def create_manifest_file(config):
 def load_staging_tables(cur, conn, config):
     # Advice from https://stackoverflow.com/questions/54528567/how-do-i-load-large-number-of-small-csv-files-from-s3-to-redshift
 
-    create_manifest_file(config)
-    upload_manifest(config)
+    # create_manifest_file(config)
+    # upload_manifest(config)
 
     for query in copy_table_queries:
         print("Executing query")

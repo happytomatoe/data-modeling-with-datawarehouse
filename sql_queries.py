@@ -212,9 +212,8 @@ BLANKSASNULL
 
 staging_songs_copy = (f"""
 copy {TableNames.staging_songs} 
-from 's3://udacity-data-modelling/manifest.json'
+from {{}}
 iam_role {{}}
-manifest 
 -- from https://stackoverflow.com/questions/57196733/best-methods-for-staging-tables-you-updated-in-redshift
 COMPUPDATE OFF STATUPDATE OFF
 format as json 'auto'
@@ -222,7 +221,7 @@ truncatecolumns
 -- check
 BLANKSASNULL
 ;
-""").format( config['IAM_ROLE']['ARN'])
+""").format(config['S3']['SONG_DATA'], config['IAM_ROLE']['ARN'])
 
 # FINAL TABLES
 
