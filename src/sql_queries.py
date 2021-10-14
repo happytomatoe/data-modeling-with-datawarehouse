@@ -135,7 +135,7 @@ SONGPLAY_TABLE_INSERT = (f"""
     song_id, artist_id, session_id, location, user_agent)
     with deduped_events AS (
      SELECT * FROM (SELECT *, ROW_NUMBER() OVER(PARTITION BY ts, userid, sessionid, song, artist ) 
-     as rn
+     AS rn
       FROM {TableNames.STAGING_EVENTS} WHERE page='NextSong') WHERE rn=1
     )
     SELECT ts AS start_time,
@@ -193,7 +193,7 @@ SONG_TABLE_INSERT = (f"""
     CASE WHEN st.year=0 then NULL
     ELSE st.year
     END,     
-    st.duration  FROM deduped_songs as st
+    st.duration  FROM deduped_songs AS st
     LEFT OUTER JOIN {TableNames.SONGS} s USING(song_id)
     WHERE s.song_id IS NULL;
 """)
@@ -203,7 +203,7 @@ ARTIST_TABLE_INSERT = (f"""
     INSERT INTO {TableNames.ARTISTS}(artist_id, name, location, latitude, longitude)  
     with deduped_artists AS (
      SELECT * FROM (SELECT *, ROW_NUMBER() OVER(PARTITION BY artist_id, artist_name) 
-     as rn
+     AS rn
       FROM {TableNames.STAGING_SONGS}) WHERE rn=1
     )
     SELECT st.artist_id, artist_name, artist_location, artist_latitude,
@@ -216,7 +216,7 @@ ARTIST_TABLE_INSERT = (f"""
 TIME_TABLE_INSERT = (f"""
     INSERT INTO {TableNames.TIME}(start_time,hour,day,week,month,year,weekday)  
     SELECT st.* FROM (SELECT ts AS start_time, 
-    extract(hour from start_time) as hour,
+    EXTRACT(hour from start_time) as hour,
     EXTRACT(day from start_time) as day,
     EXTRACT(week from start_time) as week,
     EXTRACT(month from start_time) as month,
