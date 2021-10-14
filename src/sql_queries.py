@@ -18,7 +18,6 @@ class TableNames:
 config = configparser.ConfigParser()
 config.read('dwh.cfg')
 
-
 songplays_table_create = (f"""
 CREATE TABLE {TableNames.SONGPLAYS}(
     id bigint IDENTITY(1,1) distkey,
@@ -114,7 +113,7 @@ CREATE TABLE {TableNames.staging_songs}(
     artist_longitude float,
     artist_location varchar,
     duration real,
-    song_id varchar(18),
+    song_id varchar(18) distkey,
     title varchar,
     year smallint
 )
@@ -153,7 +152,7 @@ songplay_table_insert = (f"""
     a.artist_id,
     sessionid as session_id,
     st.location,
-    useragent as user_agent
+    btrim(useragent,'"') as user_agent
     FROM {TableNames.staging_events} st
     LEFT JOIN {TableNames.ARTISTS} a ON a.name=st.artist
     LEFT JOIN {TableNames.SONGS} s ON s.title=st.song AND s.duration=st.length 
@@ -187,28 +186,32 @@ user_table_insert = (f"""
     WHERE u.user_id IS NULL;
 """)
 
-# TODO: add check if name of the song is unique. Though should it be unique?
+# TODO: figure out how to optimize
 song_table_insert = (f"""
   -- INSERT NEW ROWS ONLY
     INSERT INTO {TableNames.SONGS}(song_id, title,artist_id,year,duration)  
-    SELECT  st.song_id, st.title, st.artist_id, 
+    WITH cte AS (
+    SELECT *, ROW_NUMBER() OVER(PARTITION BY song_id) as rn FROM {TableNames.staging_songs}
+    ) 
+    SELECT DISTINCT  st.song_id, st.title, st.artist_id, 
     CASE WHEN st.year=0 then NULL
     ELSE st.year
     END,     
-    st.duration  FROM
-    {TableNames.staging_songs} st
+    st.duration  FROM cte st
     LEFT OUTER JOIN {TableNames.SONGS} s USING(song_id)
-    WHERE s.song_id IS NULL;
+    WHERE s.song_id IS NULL AND st.rn=1;
 """)
 
-# TODO: add remove duplicates or quarantine
 artist_table_insert = (f"""
     -- INSERT NEW ROWS ONLY
     INSERT INTO {TableNames.ARTISTS}(artist_id,name,location,latitude,longitude)  
-    SELECT  artist_id, artist_name, artist_location, artist_latitude,
-                     artist_longitude FROM {TableNames.staging_songs}
+    WITH cte AS (
+    SELECT *, ROW_NUMBER() OVER(PARTITION BY artist_id) as rn FROM {TableNames.staging_songs}
+    ) 
+    SELECT artist_id, artist_name, artist_location, artist_latitude,
+                     artist_longitude  FROM cte
     LEFT OUTER JOIN {TableNames.ARTISTS} a USING(artist_id)
-    WHERE a.artist_id IS NULL;
+    WHERE a.artist_id IS NULL AND cte.rn=1;
 """)
 
 time_table_insert = (f"""
