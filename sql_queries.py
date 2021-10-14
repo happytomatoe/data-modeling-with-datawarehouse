@@ -45,7 +45,7 @@ CREATE TABLE {TableNames.staging_events}(
     -- filtering 
     page varchar,  -- candidate for sortkey
     -- time data
-    ts bigint,
+    ts timestamp,
     -- user data
     useragent varchar,
     userid varchar,
@@ -109,6 +109,8 @@ CREATE TABLE {TableNames.staging_songs}(
     artist_name varchar,
     artist_latitude float,
     artist_longitude float,
+--     TODO: clean
+-- or maybe trim
     artist_location varchar,
     duration real,
     song_id varchar,
@@ -201,19 +203,26 @@ copy {TableNames.staging_events}
 from {{}} 
 iam_role {{}}
 COMPUPDATE OFF STATUPDATE OFF
-format as json 'auto ignorecase';
+format as json 'auto ignorecase'
+TIMEFORMAT AS 'epochmillisecs'
+-- check
+BLANKSASNULL
 ;
 """).format(config['S3']['LOG_DATA'], config['IAM_ROLE']['ARN'], config['IAM_ROLE']['ARN'])
 
 staging_songs_copy = (f"""
 copy {TableNames.staging_songs} 
-from {{}}
+from 's3://udacity-data-modelling/manifest.json'
 iam_role {{}}
+manifest 
 -- from https://stackoverflow.com/questions/57196733/best-methods-for-staging-tables-you-updated-in-redshift
 COMPUPDATE OFF STATUPDATE OFF
-format as json 'auto';
+format as json 'auto'
+truncatecolumns
+-- check
+BLANKSASNULL
 ;
-""").format(config['S3']['SONG_DATA'], config['IAM_ROLE']['ARN'])
+""").format( config['IAM_ROLE']['ARN'])
 
 # FINAL TABLES
 
@@ -244,36 +253,19 @@ format as json 'auto';
 songplay_table_insert = (f"""
 	INSERT INTO {TableNames.SONGPLAYS}( start_time, user_id, level,
 	 song_id, artist_id, session_id, location, user_agent)
-    SELECT timestamp 'epoch' + ts/1000 * interval '1 second' AS start_time,
+    SELECT  ts AS start_time,
     cast(userid as bigint) as user_id, 
     level,
     s.song_id,
     a.artist_id,
     sessionid as session_id,
     st.location,
-    BTRIM(useragent,'"') as user_agent
+    useragent as user_agent
     FROM {TableNames.staging_events} st
     LEFT JOIN {TableNames.ARTISTS} a ON a.name=st.artist
     LEFT JOIN {TableNames.SONGS} s ON s.title=st.song AND s.duration=st.length 
     WHERE st.page='NextSong'
 """)
-# -- filtering
-# page varchar,
-# -- time data
-# ts bigint,
-# -- user data
-# useragent varchar,
-# userid varchar,
-# firstname varchar,
-# lastname varchar,
-# gender char,
-# level varchar,
-# -- songplay data
-# artist varchar,
-# song varchar,
-# length real,
-# sessionid bigint,
-# location varchar
 
 #     log_df = log_df[log_df.page == "NextSong"]
 #
@@ -335,13 +327,11 @@ artist_table_insert = (f"""
     WHERE b.artist_id is null;
 """)
 
-
-# TODO: drop duplicates inside staging table
-
-# Idea on how convert to timestamp from https://stackoverflow.com/questions/39815425/how-to-convert-epoch-to-datetime-redshift
+# Copied the formulat that converts unix millis to timestamp from
+# https://stackoverflow.com/questions/39815425/how-to-convert-epoch-to-datetime-redshift
 time_table_insert = (f"""
     INSERT INTO {TableNames.TIME}(start_time,hour,day,week,month,year,weekday)  
-    SELECT st.* FROM (SELECT timestamp 'epoch' + ts/1000 * interval '1 second' AS start_time, 
+    SELECT st.* FROM (SELECT ts AS start_time, 
     extract(hour from start_time) as hour,
     extract(day from start_time) as day,
     extract(week from start_time) as week,
