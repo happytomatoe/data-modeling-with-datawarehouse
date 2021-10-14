@@ -20,7 +20,7 @@ def load_staging_tables(cur, conn):
 
 def merge_tables(cur, conn):
     """
-    Doing upsert, merges staging and target tables
+    Merge staging and target tables
     :param cur: db cursor
     :param conn: db connection
     """
