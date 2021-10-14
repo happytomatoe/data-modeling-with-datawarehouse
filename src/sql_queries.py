@@ -48,11 +48,11 @@ CREATE TABLE {TableNames.staging_events}(
     ts timestamp,
     -- user data
     useragent varchar,
-    userid varchar,
+    userid char(18),
     firstname varchar,
     lastname varchar,
     gender char,
-    level varchar,
+    level char(4),
     -- songplay data
     artist varchar,  
     song varchar,
@@ -105,15 +105,13 @@ CREATE TABLE {TableNames.staging_events}(
 staging_songs_table_create = (f"""
 CREATE TABLE {TableNames.staging_songs}(
 --     id bigint not null,
-    artist_id varchar,
+    artist_id char(18),
     artist_name varchar,
     artist_latitude float,
     artist_longitude float,
---     TODO: clean
--- or maybe trim
     artist_location varchar,
     duration real,
-    song_id varchar,
+    song_id varchar(18),
     title varchar,
     year smallint
 )
@@ -138,10 +136,10 @@ songplays_table_create = (f"""
 CREATE TABLE {TableNames.SONGPLAYS}(
     id bigint IDENTITY(1,1) distkey,
     start_time timestamp not null constraint songplays__time_fk references time,
-    user_id bigint constraint songplays__user_fk references users,
+    user_id char(18) constraint songplays__user_fk references users,
     level varchar,
-    song_id varchar constraint songplays__songs_fk references songs,
-    artist_id varchar constraint songplays__artist_fk references artists,
+    song_id char(18) constraint songplays__songs_fk references songs,
+    artist_id char(18) constraint songplays__artist_fk references artists,
     session_id bigint,
     location varchar,
     user_agent varchar
@@ -154,16 +152,16 @@ CREATE TABLE {TableNames.USERS} (
     first_name varchar,
     last_name varchar,
     gender char,
-    level varchar
+    level char(4)
     )
 """)
 
 # CHECK (duration >0)
 song_table_create = (f"""
 CREATE TABLE {TableNames.SONGS} (
-    song_id varchar not null constraint songs_pk primary key distkey,
+    song_id char(18) not null constraint songs_pk primary key distkey,
     title varchar not null unique,
-    artist_id varchar constraint songs__artist_fk references artists,
+    artist_id char(18) constraint songs__artist_fk references artists,
     year smallint,
     duration real not null 
     )
@@ -176,7 +174,7 @@ CREATE TABLE {TableNames.SONGS} (
 # TODO: change numeric type to real
 artist_table_create = (f"""
 CREATE TABLE {TableNames.ARTISTS}(
-    artist_id varchar not null constraint artists_pk primary key distkey,
+    artist_id char(18) not null constraint artists_pk primary key distkey,
     name varchar not null unique,
     location varchar,
     latitude real,

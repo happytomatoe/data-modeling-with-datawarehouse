@@ -44,11 +44,11 @@ lint: venv
 
 recreate-tables:
 	${VENV_ACTIVATE}
-	${PYTHON_VENV} create_tables.py
+	${PYTHON_VENV} src/create_tables.py
 
 run:
 	${VENV_ACTIVATE}
-	${PYTHON_VENV} etl.py
+	${PYTHON_VENV} src/etl.py
 
 doc: venv
 	$(VENV_ACTIVATE) && cd docs; make html
@@ -62,5 +62,6 @@ compose:
 compose-rebuild:
 	docker-compose build
 	docker-compose up -d
+
 rerun: recreate-tables
-	${PYTHON_VENV} etl.py	
+	${PYTHON_VENV} src/etl.py
