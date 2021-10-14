@@ -20,7 +20,7 @@ config.read('dwh.cfg')
 
 songplays_table_create = (f"""
 CREATE TABLE {TableNames.SONGPLAYS}(
-    id bigint IDENTITY(1,1) distkey,
+    id bigint IDENTITY(1,1),
     start_time timestamp not null constraint songplays__time_fk references time,
     user_id char(18) constraint songplays__user_fk references users,
     level char(4),
@@ -29,12 +29,12 @@ CREATE TABLE {TableNames.SONGPLAYS}(
     session_id bigint,
     location varchar,
     user_agent varchar
-    );
+    )sortkey(start_time, user_id, song_id, artist_id)
 """)
 
 user_table_create = (f"""
 CREATE TABLE {TableNames.USERS} (
-    user_id bigint not null constraint users_pk primary key distkey,
+    user_id bigint not null constraint users_pk primary key distkey sortkey,
     first_name varchar,
     last_name varchar,
     gender char,
@@ -42,41 +42,35 @@ CREATE TABLE {TableNames.USERS} (
     )
 """)
 
-# CHECK (duration >0)
 song_table_create = (f"""
 CREATE TABLE {TableNames.SONGS} (
     song_id char(18) not null constraint songs_pk primary key distkey,
-    title varchar not null unique,
-    artist_id char(18) constraint songs__artist_fk references artists,
+    title varchar not null,
+    artist_id char(18) not null constraint songs__artist_fk references artists,
     year smallint,
     duration real not null 
-    )
-
+    ) interleaved sortkey(song_id, title, artist_id, duration)
 """)
 
-# TODO:
-#  CHECK (latitude >= -90 AND latitude <= 90)
-# CHECK (latitude >= -180 AND latitude <= 180)
-# TODO: add check if artist name is unique
 artist_table_create = (f"""
 CREATE TABLE {TableNames.ARTISTS}(
     artist_id char(18) not null constraint artists_pk primary key distkey,
-    name varchar not null unique,
+    name varchar not null,
     location varchar,
     latitude real,
-    longitude real 
-    )
+    longitude real
+    ) sortkey(artist_id, name) 
 """)
 
 time_table_create = (f"""
 CREATE TABLE {TableNames.TIME}(
-    start_time timestamp not null constraint time_pk primary key distkey,
+    start_time timestamp not null constraint time_pk primary key sortkey,
     hour smallint not null,
     day smallint not null,
     week smallint not null,
     month smallint not null,
     year smallint not null,
-    weekday smallint not null 
+    weekday smallint not null
 )
 """)
 
@@ -84,18 +78,14 @@ CREATE TABLE {TableNames.TIME}(
 
 staging_events_table_create = (f"""
 CREATE TABLE {TableNames.staging_events}(
-    -- filtering 
-    page varchar,  -- candidate for sortkey
-    -- time data
+    page varchar,
     ts timestamp,
-    -- user data
-    useragent varchar(50),
+    useragent varchar,
     userid char(18),
     firstname varchar,
     lastname varchar,
     gender char,
     level char(4),
-    -- songplay data
     artist varchar,  
     song varchar,
     length real,
@@ -104,7 +94,6 @@ CREATE TABLE {TableNames.staging_events}(
 )
 """)
 
-# TODO: pick sort keys for tables
 staging_songs_table_create = (f"""
 CREATE TABLE {TableNames.staging_songs}(
     artist_id char(18),
@@ -113,7 +102,7 @@ CREATE TABLE {TableNames.staging_songs}(
     artist_longitude float,
     artist_location varchar,
     duration real,
-    song_id varchar(18) distkey,
+    song_id varchar(18),
     title varchar,
     year smallint
 )
@@ -126,11 +115,10 @@ staging_events_copy = (f"""
     COMPUPDATE OFF STATUPDATE OFF
     FORMAT AS JSON 'auto ignorecase'
     TIMEFORMAT AS 'epochmillisecs'
+    TRUNCATECOLUMNS
     BLANKSASNULL;
 """).format(config['S3']['LOG_DATA'], config['IAM_ROLE']['ARN'], config['IAM_ROLE']['ARN'])
 
-# Copied the flags to speed up copy command  from
-# https://stackoverflow.com/questions/57196733/best-methods-for-staging-tables-you-updated-in-redshift
 staging_songs_copy = (f"""
     COPY {TableNames.staging_songs} 
     FROM {{}}
@@ -141,57 +129,63 @@ staging_songs_copy = (f"""
     BLANKSASNULL;
 """).format(config['S3']['SONG_DATA'], config['IAM_ROLE']['ARN'])
 
+# TODO: create another table for artist name/alias
 # FINAL TABLES
+# TODO: try with using
 songplay_table_insert = (f"""
     INSERT INTO {TableNames.SONGPLAYS}(start_time, user_id, level,
     song_id, artist_id, session_id, location, user_agent)
-    SELECT  ts AS start_time,
+    SELECT ts AS start_time,
     cast(userid as bigint) as user_id, 
     level,
-    s.song_id,
+    case when a.artist_id IS NOT NULL then s.song_id
+    end,
     a.artist_id,
     sessionid as session_id,
     st.location,
     btrim(useragent,'"') as user_agent
     FROM {TableNames.staging_events} st
-    LEFT JOIN {TableNames.ARTISTS} a ON a.name=st.artist
     LEFT JOIN {TableNames.SONGS} s ON s.title=st.song AND s.duration=st.length 
+    LEFT JOIN {TableNames.ARTISTS} a ON s.artist_id=a.artist_id AND a.name=st.artist  
     WHERE st.page='NextSong'
 """)
 
-# TODO: add update
 user_table_insert = (f"""
-    INSERT INTO {TableNames.USERS}(user_id,first_name,last_name,gender,level)  
-    WITH cte AS (
+    -- select records unique user ids with latest timestamp      
+    CREATE TEMPORARY TABLE st AS (
+        SELECT user_id,first_name,last_name, gender, level FROM (
+        SELECT *, ROW_NUMBER() OVER(PARTITION BY user_id ORDER BY ts DESC) FROM (
         SELECT 
-        userid::bigint as user_id,
+        cast(userid as  bigint) as user_id,
         firstname as first_name, 
         lastname as last_name,
         gender, 
         level,
         ts FROM {TableNames.staging_events}
-        WHERE page='NextSong' AND userid IS NOT NULL 
-    ), 
-    -- select records unique user ids with latest timestamp      
-    st AS (
-        SELECT user_id,first_name,last_name, gender, level FROM (
-        SELECT *, ROW_NUMBER() OVER(PARTITION BY user_id ORDER BY ts DESC) FROM cte
-        )
+        WHERE page='NextSong' AND userid IS NOT NULL ))
         WHERE row_number=1
-    )
+    );
     
+    
+    --  Insert only new rows   
+    INSERT INTO {TableNames.USERS}(user_id,first_name,last_name,gender,level)  
     SELECT st.* FROM st  
     LEFT OUTER JOIN {TableNames.USERS} u
     ON st.user_id IS NOT NULL AND st.user_id=u.user_id 
     WHERE u.user_id IS NULL;
+    
+    UPDATE {TableNames.USERS}  
+    SET level=st.level
+    FROM st
+    WHERE {TableNames.USERS}.user_id=st.user_id;
 """)
 
-# TODO: figure out how to optimize
 song_table_insert = (f"""
   -- INSERT NEW ROWS ONLY
     INSERT INTO {TableNames.SONGS}(song_id, title,artist_id,year,duration)  
     WITH cte AS (
-    SELECT *, ROW_NUMBER() OVER(PARTITION BY song_id) as rn FROM {TableNames.staging_songs}
+    SELECT *, ROW_NUMBER() OVER(PARTITION BY song_id) as rn FROM
+     {TableNames.staging_songs}
     ) 
     SELECT DISTINCT  st.song_id, st.title, st.artist_id, 
     CASE WHEN st.year=0 then NULL
@@ -199,19 +193,17 @@ song_table_insert = (f"""
     END,     
     st.duration  FROM cte st
     LEFT OUTER JOIN {TableNames.SONGS} s USING(song_id)
-    WHERE s.song_id IS NULL AND st.rn=1;
+    WHERE s.song_id IS NULL AND rn=1;
 """)
 
+# TODO: Add note about duplication in readme
 artist_table_insert = (f"""
     -- INSERT NEW ROWS ONLY
     INSERT INTO {TableNames.ARTISTS}(artist_id,name,location,latitude,longitude)  
-    WITH cte AS (
-    SELECT *, ROW_NUMBER() OVER(PARTITION BY artist_id) as rn FROM {TableNames.staging_songs}
-    ) 
     SELECT artist_id, artist_name, artist_location, artist_latitude,
-                     artist_longitude  FROM cte
+                     artist_longitude  FROM {TableNames.staging_songs}
     LEFT OUTER JOIN {TableNames.ARTISTS} a USING(artist_id)
-    WHERE a.artist_id IS NULL AND cte.rn=1;
+    WHERE a.artist_id IS NULL;
 """)
 
 time_table_insert = (f"""
