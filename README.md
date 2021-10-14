@@ -79,3 +79,8 @@ log_data/2018/11/2018-11-12-events.json
 log_data/2018/11/2018-11-13-events.json
 
 ![image](./log-data.png)
+
+
+# Helpful resources:
+- [Official documentation](https://docs.aws.amazon.com/redshift/latest/dg/welcome.html)
+- [Amazing intro guide to redshift](https://dev.to/ronsoak/the-r-a-g-redshift-analyst-guide-what-is-redshift-fc1)
